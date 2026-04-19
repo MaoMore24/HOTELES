@@ -1413,6 +1413,26 @@ SELECT Nombre_Hotel, dbo.FN_ObtenerUbicacionHotel(ID_Hotel) AS 'Ubicación Geogr
 FROM HOTELES;
 
 
+---Obtener Nombre Completo de Cliente
+CREATE FUNCTION FN_ObtenerNombreCompletoCliente (
+    @IdCliente INT
+)
+RETURNS VARCHAR(150)
+AS
+BEGIN
+    DECLARE @NombreCompleto VARCHAR(150);
+
+    SELECT @NombreCompleto = Nombre_Cliente + ' ' + Apellido1_Cliente + ' ' + Apellido2_Cliente
+    FROM CLIENTES
+    WHERE ID_Cliente = @IdCliente;
+
+    RETURN @NombreCompleto;
+END;
+
+---EJEMPLO DE USO DE LA FUNCIÓN
+SELECT dbo.FN_ObtenerNombreCompletoCliente (2) AS 'Nombre completo del Cliente';
+
+
 ---Obtener Nombre Completo de Empleado
 CREATE FUNCTION FN_ObtenerNombreCompletoEmpleado (
     @IdEmpleado INT
@@ -1430,7 +1450,8 @@ BEGIN
 END;
 
 ---EJEMPLO DE USO DE LA FUNCIÓN
-SELECT dbo.FN_ObtenerNombreCompletoEmpleado(1) AS 'Empleado del Mes';
+SELECT dbo.FN_ObtenerNombreCompletoEmpleado(3) AS 'Empleado del Mes';
+
 
 
 ---Calcular Espacio Disponible en Restaurante
@@ -1481,10 +1502,219 @@ END;
 
 ---EJEMPLO DE USO DE LA FUNCIÓN
 SELECT 
-    Numero_Habitacion, 
-    Precio_Noche AS 'Precio USD', 
-    dbo.F_ConvertirDolaresAColones(ID_Habitacion) AS 'Precio CRC'
+    Numero_Habitacion, Precio_Noche, 
+    dbo.F_ConvertirDolaresAColones(ID_Habitacion) AS 'Precio en Colones'
 FROM HABITACIONES;
 
 
+CREATE FUNCTION FN_CalcularDiasEstancia (
+    @IdReservacion INT
+)
+RETURNS INT
+AS
+BEGIN
+    DECLARE @DiasEstancia INT;
+
+    SELECT @DiasEstancia = DATEDIFF(DAY, Fecha_Entrada, Fecha_Salida)
+    FROM RESERVACIONES
+    WHERE ID_Reservacion = @IdReservacion;
+
+    RETURN @DiasEstancia;
+END;
+
+---EJEMPLO DE USO DE LA FUNCIÓN
+SELECT 
+    ID_Reservacion, Fecha_Entrada, Fecha_Salida, 
+    dbo.FN_CalcularDiasEstancia(ID_Reservacion) AS 'Noches de Estancia'
+FROM RESERVACIONES;
+
+
 ---VISTAS
+---VISTA 1: REPORTE DETALLADO DE HABITACIONES RESERVADAS POR HOTEL
+CREATE VIEW V_HabitacionesReservadasPorHotel
+AS
+SELECT
+    H.Nombre_Hotel,
+    Hab.Numero_Habitacion,
+    R.Fecha_Entrada,
+    R.Fecha_Salida,
+    dbo.FN_ObtenerNombreCompletoCliente(C.ID_Cliente) AS 'Cliente',
+    R.Estado_Reservacion
+FROM RESERVACIONES R
+INNER JOIN CLIENTES C ON R.ID_Cliente = C.ID_Cliente
+INNER JOIN HABITACIONES Hab ON R.ID_Habitacion = Hab.ID_Habitacion
+INNER JOIN HOTELES H ON Hab.ID_Hotel = H.ID_Hotel;
+
+---CONSULTA DE LA VISTA
+SELECT * FROM V_HabitacionesReservadasPorHotel 
+WHERE Nombre_Hotel = 'Hotel San José Royal' AND Estado_Reservacion = 'Completada';
+
+
+---VISTA 2: REPORTE DETALLADO DE RESERVACIONES DE HABITACIONES
+CREATE VIEW V_DetalleReservacionesHabitaciones 
+AS 
+SELECT 
+    R.ID_Reservacion,
+    dbo.FN_ObtenerNombreCompletoCliente(C.ID_Cliente) AS 'Cliente',
+    H.Nombre_Hotel,
+    Hab.Numero_Habitacion,
+    R.Fecha_Entrada,
+    R.Fecha_Salida,
+    dbo.FN_CalcularDiasEstancia(R.ID_Reservacion) AS 'Noches',
+    Hab.Precio_Noche AS 'Precio Base',
+    (Hab.Precio_Noche * dbo.FN_CalcularDiasEstancia(R.ID_Reservacion)) AS 'Subtotal Hospedaje'
+FROM RESERVACIONES R
+INNER JOIN CLIENTES C ON R.ID_Cliente = C.ID_Cliente
+INNER JOIN HABITACIONES Hab ON R.ID_Habitacion = Hab.ID_Habitacion
+INNER JOIN HOTELES H ON Hab.ID_Hotel = H.ID_Hotel;
+
+---CONSULTA DE LA VISTA
+SELECT * FROM V_DetalleReservacionesHabitaciones WHERE Noches > 3;
+
+SELECT * FROM V_DetalleReservacionesHabitaciones;
+
+
+---VISTA 3: CONTROL MAESTRO DE ESTANCIAS
+CREATE VIEW V_ControlMaestroEstancias AS
+SELECT 
+    R.ID_Reservacion,
+    C.Nombre_Cliente + ' ' + C.Apellido1_Cliente AS 'Nombre Cliente',
+    H.Nombre_Hotel,
+    Hab.Numero_Habitacion,
+    CI.Fecha_Checkin AS 'Fecha Entrada',
+    CI.Hora_Checkin AS 'Hora Entrada',
+    dbo.FN_ObtenerNombreCompletoEmpleado(CI.ID_Empleado) AS 'Recepcionista',
+    CO.Fecha_Checkout AS 'Fecha Salida',
+    CO.Hora_Checkout AS 'Hora Salida',
+    CO.Total AS 'Monto Total Pagado'
+FROM RESERVACIONES R
+INNER JOIN CLIENTES C ON R.ID_Cliente = C.ID_Cliente
+INNER JOIN HABITACIONES Hab ON R.ID_Habitacion = Hab.ID_Habitacion
+INNER JOIN HOTELES H ON Hab.ID_Hotel = H.ID_Hotel
+INNER JOIN CHECKIN CI ON R.ID_Reservacion = CI.ID_Reservacion
+LEFT JOIN CHECKOUT CO ON R.ID_Reservacion = CO.ID_Reservacion;
+
+---CONSULTA DE LA VISTA
+SELECT * FROM V_ControlMaestroEstancias 
+WHERE [Monto Total Pagado] < 700.00;
+
+---VISTA 4: RESERVACIONES REALIZADAS POR EMPLEADO
+CREATE VIEW V_ReservacionesPorEmpleado
+AS
+SELECT 
+    dbo.FN_ObtenerNombreCompletoEmpleado(E.ID_Empleado) AS 'Empleado',
+    COUNT(*) AS 'Cantidad de Reservaciones'
+
+FROM CHECKIN CI
+JOIN EMPLEADOS E ON CI.ID_Empleado = E.ID_Empleado
+GROUP BY E.ID_Empleado;
+
+---CONSULTA DE LA VISTA
+SELECT * FROM V_ReservacionesPorEmpleado 
+WHERE [Cantidad de Reservaciones] > 2;
+
+
+---VISTA 5: RESUMEN DE TODAS LAS RESERVAS DE RESTAURANTES EN UNA TABLA
+CREATE VIEW V_ResumenReservasRestaurantes
+AS
+SELECT 
+    R.Nombre_Restaurante,
+    RR.Estado_Reservacion_Restaurante AS 'Estado de Reservación',
+    RR.Fecha_Reservacion_Rest AS 'Fecha de Reservación',
+    RR.Hora_Reservacion_Rest AS 'Hora de Reservación',
+    RR.Cantidad_Personas AS 'Cantidad de Personas',
+    RR.ID_Restaurante
+FROM RESERVACIONES_RESTAURANTE RR
+JOIN RESTAURANTES R ON RR.ID_Reservacion_Restaurante = R.ID_Restaurante;
+
+---CONSULTA DE LA VISTA
+SELECT * FROM V_ResumenReservasRestaurantes 
+WHERE [Estado de Reservación] = 'Confirmada' AND [Fecha de Reservación] >= '2026-01-01';
+
+
+---VISTA 6: RESERVACIONES RESTAURANTES POR ESTADO (Confirmada, Cancelada, Pendiente)   
+CREATE VIEW V_ReservacionesRestaurantePorEstado
+AS
+SELECT 
+    Estado_Reservacion_Restaurante AS 'Estado de Reservación',
+    COUNT(*) AS 'Cantidad de Reservaciones'
+
+FROM RESERVACIONES_RESTAURANTE R
+GROUP BY Estado_Reservacion_Restaurante;
+
+
+---CONSULTA DE LA VISTA
+SELECT * FROM V_ReservacionesRestaurantePorEstado;
+
+SELECT * FROM V_ReservacionesRestaurantePorEstado 
+WHERE [Estado de Reservación] = 'Confirmada';
+
+
+---TRIGGERS
+---TRIGGER 1: ACTUALIZAR ESTADO DE HABITACIÓN A 'Ocupada' AL REALIZAR CHECK-IN
+CREATE TRIGGER TR_ActualizarEstadoHabitacionCheckIn
+ON CHECKIN
+AFTER INSERT
+AS
+BEGIN
+    UPDATE H
+    SET Estado_Habitacion = 'Ocupada'
+    FROM HABITACIONES H
+    JOIN INSERTED I ON H.ID_Habitacion = (SELECT ID_Habitacion FROM RESERVACIONES WHERE ID_Reservacion = I.ID_Reservacion);
+END;
+
+---PRUEBA TRIGGER
+SELECT * FROM HABITACIONES WHERE ID_Habitacion = 2; -- Antes del Check-in
+
+INSERT INTO CHECKIN (ID_Reservacion, Fecha_Checkin, Hora_Checkin, ID_Empleado)
+VALUES (1, '2026-01-01', '12:00', 2);
+
+SELECT * FROM HABITACIONES WHERE ID_Habitacion = 2; -- Después del Check-in
+
+
+---TRIGGER 2: EVITA QUE SE REGISTREN RESERVAS CON FECHAS INCORRECTAS
+CREATE TRIGGER TR_ValidarFechasReservacion
+ON RESERVACIONES
+AFTER INSERT
+AS
+BEGIN
+    IF EXISTS (
+        SELECT 1 
+        FROM INSERTED I
+        WHERE I.Fecha_Salida < I.Fecha_Entrada
+    )
+    BEGIN
+        RAISERROR('La fecha de salida no puede ser anterior a la fecha de entrada.', 16, 1);
+        ROLLBACK TRANSACTION;
+    END
+END;
+
+---PRUEBA TRIGGER
+INSERT INTO RESERVACIONES (Fecha_Entrada, Fecha_Salida, Estado_Reservacion, ID_Cliente, ID_Habitacion)
+VALUES ('2026-01-05', '2026-01-04', 'Confirmada', 1, 1); 
+
+
+---TRIGGER 3: ASEGURA RESERVACIONES CON NUMERO DE PERSONAS MAYOR A CERO EN RESERVACIONES DE RESTAURANTE
+CREATE TRIGGER TR_ValidarCantidadPersonasReservacionRestaurante
+ON RESERVACIONES_RESTAURANTE
+AFTER INSERT
+AS
+BEGIN
+    IF EXISTS (
+        SELECT 1 
+        FROM INSERTED I
+        WHERE I.Cantidad_Personas <= 0
+    )
+    BEGIN
+        RAISERROR('La cantidad de personas debe ser mayor a cero.', 16, 1);
+        ROLLBACK TRANSACTION;
+    END
+END;
+
+---PRUEBA TRIGGER
+INSERT INTO RESERVACIONES_RESTAURANTE (Fecha_Reservacion_Rest, Hora_Reservacion_Rest, Cantidad_Personas, Estado_Reservacion_Restaurante, ID_Cliente, ID_Restaurante)
+VALUES ('2026-01-01', '12:00', 0, 'Confirmada', 1, 1);
+
+INSERT INTO RESERVACIONES_RESTAURANTE (Fecha_Reservacion_Rest, Hora_Reservacion_Rest, Cantidad_Personas, Estado_Reservacion_Restaurante, ID_Cliente, ID_Restaurante)
+VALUES ('2026-02-01', '12:00', 3, 'Confirmada', 1, 1);
+
